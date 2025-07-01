@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import LinearGradient from 'react-native-linear-gradient';
-import Svg, { Path, G, Text as SvgText, Line, Circle, Defs, RadialGradient, Stop, Rect, ClipPath } from 'react-native-svg';
+import Svg, { Path, G, Text as SvgText, Line, Circle, Defs, RadialGradient, Stop, Rect, ClipPath, Mask } from 'react-native-svg';
 
 const BG_GRADIENT = ['#1a1c2c', '#23253a', '#23253a'];
 const PRIMARY = '#4fd1ff';
@@ -61,10 +61,10 @@ function SpeedometerDial({ speed, maxSpeed }) {
   const clampedSpeed = Math.max(0, Math.min(speed, 220));
   // Needle: 0 at 225°, 220 at 45°
   const angle = DIAL_START_ANGLE + ((clampedSpeed - 0) / 220) * 270;
-  const needleLength = DIAL_RADIUS * 0.32;
-  // Needle base a bit above the 0 label position (closer to center)
-  const base = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, DIAL_RADIUS - 38 - 18, DIAL_START_ANGLE); // 18px closer to center
-  const tip = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, DIAL_RADIUS - 38 + needleLength, angle);
+  const needleLength = DIAL_RADIUS * 0.85; // Made needle much bigger - almost to the edge
+  // Needle base at the center of the dial (traditional speedometer style)
+  const base = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, 0, DIAL_START_ANGLE); // Start from center
+  const tip = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, needleLength, angle);
 
   // Major ticks (every 20, including 0)
   const majorTicks = TICK_ANGLES;
@@ -93,6 +93,10 @@ function SpeedometerDial({ speed, maxSpeed }) {
           {/* ClipPath for the dial area */}
           <ClipPath id="dialClip">
             <Circle cx={DIAL_CENTER_X} cy={DIAL_CENTER_Y} r={DIAL_RADIUS} />
+          </ClipPath>
+          {/* ClipPath to show only lower half of needle */}
+          <ClipPath id="needleLowerHalf">
+            <Rect x="0" y={DIAL_CENTER_Y} width={width} height={width * 0.6} />
           </ClipPath>
         </Defs>
         {/* Dial background as a complete circle */}
@@ -155,31 +159,46 @@ function SpeedometerDial({ speed, maxSpeed }) {
             </SvgText>
           );
         })}
-        {/* Needle shadow (clipped) */}
+                          {/* Needle with upper half hidden by shadow effect */}
         <G clipPath="url(#dialClip)">
+          {/* Shadow for the visible part of the needle */}
           <Line
             x1={base.x}
             y1={base.y}
-            x2={tip.x + 2}
-            y2={tip.y + 2}
+            x2={tip.x + 1}
+            y2={tip.y + 1}
             stroke="#000"
-            strokeWidth={5}
+            strokeWidth={3}
             strokeLinecap="round"
             opacity={0.15}
           />
-          {/* Needle (very short, base at 0) */}
+          {/* Main needle - only lower half visible */}
+          <G clipPath="url(#needleLowerHalf)">
+            <Line
+              x1={base.x}
+              y1={base.y}
+              x2={tip.x}
+              y2={tip.y}
+              stroke={NEEDLE_COLOR}
+              strokeWidth={2}
+              strokeLinecap="round"
+            />
+          </G>
+          {/* Shadow overlay to create depth effect on upper half */}
           <Line
             x1={base.x}
             y1={base.y}
             x2={tip.x}
             y2={tip.y}
-            stroke={NEEDLE_COLOR}
+            stroke="#000"
             strokeWidth={3}
             strokeLinecap="round"
+            opacity={0.6}
           />
+
         </G>
       </Svg>
-      {/* Large speed number (centered) */}
+      {/* Large speed number (centered, positioned above needle base) */}
       <View style={{ position: 'absolute', top: DIAL_CENTER_Y - 40, left: 0, width: width, alignItems: 'center' }}>
         <Text style={{ fontSize: 68, color: '#fff', fontWeight: 'bold', fontFamily: 'System', textShadowColor: '#000', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8 }}>{Math.round(speed)}</Text>
         <Text style={{ fontSize: 32, color: PRIMARY, fontWeight: '600', marginTop: -8, fontFamily: 'System', textShadowColor: '#000', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8 }}>km/h</Text>
@@ -225,6 +244,14 @@ function InfoIcon({ type }) {
       <Svg width={24} height={24} viewBox="0 0 24 24">
         <Circle cx={12} cy={12} r={10} stroke={INFO_ICON} strokeWidth={2} fill="none" />
         <Circle cx={12} cy={12} r={4} fill={INFO_ICON} />
+      </Svg>
+    );
+  }
+  if (type === 'time') {
+    return (
+      <Svg width={24} height={24} viewBox="0 0 24 24">
+        <Circle cx={12} cy={12} r={10} stroke={INFO_ICON} strokeWidth={2} fill="none" />
+        <Path d="M12 6v6l4 2" stroke={INFO_ICON} strokeWidth={2} strokeLinecap="round" />
       </Svg>
     );
   }
@@ -433,7 +460,7 @@ const App = () => {
     );
   };
 
-  // Improved speed calculation using multiple methods
+  // Improved speed calculation with better movement detection
   const calculateSpeedFromGPS = (position) => {
     const { speed, coords, timestamp } = position;
     
@@ -453,7 +480,7 @@ const App = () => {
       const timeDiff = (timestamp - lastLocation.current.timestamp) / 1000; // seconds
       console.log('Time diff:', timeDiff); // Debug log
       
-      if (timeDiff > 0.1 && timeDiff < 10) { // Valid time difference
+      if (timeDiff > 0.1 && timeDiff < 15) { // Increased max time difference
         const distance = calculateDistance(
           lastLocation.current.latitude,
           lastLocation.current.longitude,
@@ -463,25 +490,23 @@ const App = () => {
         
         console.log('Calculated distance:', distance); // Debug log
         
-        if (distance > 0.00001) { // Very small distance threshold (10cm)
+        // More sensitive distance thresholds
+        if (distance > 0.000005) { // Reduced threshold to 5cm
           const speedKmh = (distance / timeDiff) * 3600; // km/h
           console.log('Calculated speed:', speedKmh); // Debug log
           
-          // For high speeds, be more lenient with distance thresholds
-          if (speedKmh > 50) {
-            // High speed mode - accept smaller distances
-            return speedKmh;
-          } else if (distance > 0.0001) { // 1 meter for normal speeds
+          // Accept any reasonable speed calculation
+          if (speedKmh > 0 && speedKmh < 300) {
             return speedKmh;
           }
         }
       }
     }
     
-    // Method 3: Use a minimum speed threshold for very slow movement
+    // Method 3: Enhanced minimum speed detection for very slow movement
     if (lastLocation.current && coords) {
       const timeDiff = (timestamp - lastLocation.current.timestamp) / 1000;
-      if (timeDiff > 0.5) { // If more than 0.5 seconds have passed
+      if (timeDiff > 0.3) { // Reduced time threshold to 0.3 seconds
         const distance = calculateDistance(
           lastLocation.current.latitude,
           lastLocation.current.longitude,
@@ -493,8 +518,18 @@ const App = () => {
         if (distance > 0.000001) { // Any movement at all (1mm)
           const speedKmh = (distance / timeDiff) * 3600;
           console.log('Minimum speed calculated:', speedKmh);
-          return Math.max(speedKmh, 0.1); // Minimum 0.1 km/h
+          return Math.max(speedKmh, 0.05); // Reduced minimum to 0.05 km/h
         }
+      }
+    }
+    
+    // Method 4: Check if we've been stationary for too long and clear history
+    if (lastLocation.current && coords) {
+      const timeDiff = (timestamp - lastLocation.current.timestamp) / 1000;
+      if (timeDiff > 5) { // If more than 5 seconds have passed
+        // Clear old location to allow fresh start
+        console.log('Clearing old location data for fresh start');
+        lastLocation.current = null;
       }
     }
     
@@ -502,34 +537,59 @@ const App = () => {
     return 0;
   };
 
-  // Kalman filter for speed smoothing
+  // Improved speed smoothing with better zero-speed handling
   const smoothSpeed = (newSpeed) => {
     if (speedReadings.current.length === 0) {
       console.log('First speed reading, using as-is:', newSpeed);
       return newSpeed;
     }
     
-    // Remove outliers
+    // Get recent speeds for analysis
     const recentSpeeds = speedReadings.current.slice(-5);
     const avgSpeed = recentSpeeds.reduce((a, b) => a + b, 0) / recentSpeeds.length;
     
-    // If average is 0 and we have a valid speed, use the new speed
+    // Special handling for transitions from 0 to positive speed
     if (avgSpeed === 0 && newSpeed > 0) {
-      console.log('Average is 0, using new speed:', newSpeed);
+      console.log('Transition from 0 to positive speed, using new speed:', newSpeed);
+      // Clear old readings to prevent getting stuck
+      speedReadings.current = [];
       return newSpeed;
     }
     
-    // If new speed is too different from average, it might be noise
-    // But be more lenient to allow actual speed changes
-    if (avgSpeed > 0 && Math.abs(newSpeed - avgSpeed) > avgSpeed * 3.0) { // Increased threshold for high speeds
+    // Special handling for transitions from positive speed to 0
+    if (avgSpeed > 0 && newSpeed === 0) {
+      console.log('Transition from positive to 0 speed, using 0');
+      return 0;
+    }
+    
+    // If we've been at 0 for a while and get a new positive speed, trust it
+    const zeroCount = recentSpeeds.filter(s => s === 0).length;
+    if (zeroCount >= 3 && newSpeed > 0) {
+      console.log('Been at 0 for a while, accepting new positive speed:', newSpeed);
+      // Clear some old readings to allow fresh start
+      speedReadings.current = speedReadings.current.slice(-2);
+      return newSpeed;
+    }
+    
+    // Outlier detection - but be more lenient for speed changes
+    if (avgSpeed > 0 && Math.abs(newSpeed - avgSpeed) > avgSpeed * 4.0) {
       console.log('Speed outlier detected, using average:', avgSpeed);
       return avgSpeed;
     }
     
-    // Weighted average for smoothing - give more weight to new readings for high speeds
-    const weight = newSpeed > 50 ? 0.8 : 0.7; // More weight to new readings at high speeds
+    // Adaptive smoothing based on speed range
+    let weight = 0.6; // Default weight
+    
+    if (newSpeed === 0) {
+      weight = 0.8; // More weight to 0 readings to prevent false positives
+    } else if (newSpeed > 50) {
+      weight = 0.8; // More weight to high speed readings
+    } else if (newSpeed < 5) {
+      weight = 0.7; // Moderate weight for low speeds
+    }
+    
     const smoothedSpeed = (avgSpeed * (1 - weight)) + (newSpeed * weight);
-    console.log('Smoothing: avg=', avgSpeed, 'new=', newSpeed, 'result=', smoothedSpeed);
+    console.log('Smoothing: avg=', avgSpeed, 'new=', newSpeed, 'weight=', weight, 'result=', smoothedSpeed);
     return smoothedSpeed;
   };
 
@@ -673,7 +733,7 @@ const App = () => {
         }
 
         // Calculate distance with improved accuracy
-        if (lastLocation.current && coords && currentAccuracy < 10) {
+        if (lastLocation.current && coords) {
           const distance = calculateDistance(
             lastLocation.current.latitude,
             lastLocation.current.longitude,
@@ -681,14 +741,13 @@ const App = () => {
             coords.longitude
           );
           
-          // Only add distance if it's reasonable (not GPS jump)
-          if (distance > 0 && distance < 0.1) { // Max 100m per update
-            let distanceInUnit = distance;
-            if (distanceUnit === 'miles') {
-              distanceInUnit = distance * 0.621371; // km to miles
-            }
-            
-            setTotalDistance(prev => prev + distanceInUnit);
+          // Convert distance to meters and add if reasonable
+          const distanceInMeters = distance * 1000; // Convert km to meters
+          
+          // Only add distance if it's reasonable (not GPS jump) and we have good accuracy
+          if (distanceInMeters > 0 && distanceInMeters < 50 && currentAccuracy < 15) { // Max 50m per update
+            setTotalDistance(prev => prev + distanceInMeters);
+            console.log('Distance added:', distanceInMeters.toFixed(2), 'm, Total:', (totalDistance + distanceInMeters).toFixed(2), 'm');
           }
         }
 
@@ -720,6 +779,18 @@ const App = () => {
         }
         const avg = speedReadings.current.reduce((a, b) => a + b, 0) / speedReadings.current.length;
         setAverageSpeed(avg);
+        
+        // Auto-reset if stuck at 0 for too long (more than 10 readings)
+        if (speedReadings.current.length > 10) {
+          const recentSpeeds = speedReadings.current.slice(-10);
+          const allZero = recentSpeeds.every(speed => speed === 0);
+          if (allZero) {
+            console.log('Auto-resetting speed calculation - stuck at 0 for too long');
+            speedReadings.current = [];
+            lastLocation.current = null;
+            setGpsStatus('Auto-reset: Clearing stuck speed data');
+          }
+        }
       },
       (error) => {
         console.log('Location error:', error);
@@ -731,9 +802,9 @@ const App = () => {
       {
         enableHighAccuracy: true,
         distanceFilter: 0, // Update every movement (no filter)
-        interval: 500, // Update every 500ms (faster for high speeds)
-        fastestInterval: 250, // Fastest update every 250ms
-        maximumAge: 5000, // Accept cached locations up to 5 seconds old
+        interval: 300, // Update every 300ms (faster updates)
+        fastestInterval: 100, // Fastest update every 100ms
+        maximumAge: 2000, // Accept cached locations up to 2 seconds old
       }
     );
     
@@ -794,7 +865,14 @@ const App = () => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    
+    if (hrs > 0) {
+      return `${hrs}h ${mins}min ${secs}s`;
+    } else if (mins > 0) {
+      return `${mins}min ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
   };
 
   const formatSpeed = (speed) => {
@@ -802,7 +880,11 @@ const App = () => {
   };
 
   const formatDistance = (distance) => {
-    return distance.toFixed(2);
+    if (distance < 1000) {
+      return `${distance.toFixed(0)}m`;
+    } else {
+      return `${(distance / 1000).toFixed(2)}km`;
+    }
   };
 
   const getSpeedColor = (speed) => {
@@ -847,6 +929,10 @@ const App = () => {
     console.log('Forcing GPS update...');
     setGpsStatus('Forcing GPS Update...');
     
+    // Clear speed history to force fresh calculation
+    speedReadings.current = [];
+    lastLocation.current = null;
+    
     Geolocation.getCurrentPosition(
       (position) => {
         console.log('Forced GPS update:', position);
@@ -877,6 +963,21 @@ const App = () => {
         maximumAge: 0,
       }
     );
+  };
+
+  const resetSpeedCalculation = () => {
+    console.log('Resetting speed calculation...');
+    setGpsStatus('Resetting Speed Calculation...');
+    
+    // Clear all speed-related data
+    speedReadings.current = [];
+    lastLocation.current = null;
+    lastSpeedUpdate.current = 0;
+    
+    // Force a fresh GPS reading
+    setTimeout(() => {
+      forceGPSUpdate();
+    }, 1000);
   };
 
   const startEmulatorSimulation = () => {
@@ -958,12 +1059,11 @@ const App = () => {
           coords.longitude
         );
         
-        if (distance > 0) {
-          let distanceInUnit = distance;
-          if (distanceUnit === 'miles') {
-            distanceInUnit = distance * 0.621371;
-          }
-          setTotalDistance(prev => prev + distanceInUnit);
+        // Convert distance to meters and add if reasonable
+        const distanceInMeters = distance * 1000; // Convert km to meters
+        
+        if (distanceInMeters > 0 && distanceInMeters < 50) {
+          setTotalDistance(prev => prev + distanceInMeters);
         }
       }
       
@@ -1075,18 +1175,63 @@ const App = () => {
         <View style={{ alignItems: 'center', marginTop: 10 }}>
           <Text style={{ color: PRIMARY, fontSize: 44, fontWeight: 'bold', fontFamily: 'System' }}>{(currentSpeed / 3.6).toFixed(0)}</Text>
           <Text style={{ color: '#b0c4de', fontSize: 20, fontFamily: 'System' }}>m/s</Text>
+          
+          {/* Movement detection indicator */}
+          {isTracking && currentSpeed === 0 && speedReadings.current.length > 5 && (
+            <View style={{ 
+              flexDirection: 'row', 
+              alignItems: 'center', 
+              marginTop: 4,
+              backgroundColor: 'rgba(255, 165, 0, 0.2)',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 12
+            }}>
+              <View style={{ 
+                width: 6, 
+                height: 6, 
+                borderRadius: 3, 
+                backgroundColor: '#FFA500',
+                marginRight: 6
+              }} />
+              <Text style={{ color: '#FFA500', fontSize: 12, fontFamily: 'System' }}>
+                Waiting for movement...
+              </Text>
+            </View>
+          )}
         </View>
         {/* Info row with SVG icons */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
           <View style={{ alignItems: 'center', flexDirection: 'row' }}>
             <InfoIcon type="distance" />
-            <Text style={{ color: INFO_TEXT, fontSize: 20, marginLeft: 6, fontFamily: 'System' }}>{totalDistance.toFixed(0)}m</Text>
+            <Text style={{ color: INFO_TEXT, fontSize: 20, marginLeft: 6, fontFamily: 'System' }}>{formatDistance(totalDistance)}</Text>
           </View>
           <View style={{ alignItems: 'center', flexDirection: 'row' }}>
             <InfoIcon type="accuracy" />
-            <Text style={{ color: INFO_TEXT, fontSize: 20, marginLeft: 6, fontFamily: 'System' }}>{accuracy.toFixed(0)}m</Text>
+            <Text style={{ color: INFO_TEXT, fontSize: 20, marginLeft: 6, fontFamily: 'System' }}>±{accuracy.toFixed(0)}m</Text>
           </View>
         </View>
+        
+        {/* Reset speed button - only show when speed is 0 and tracking is active */}
+        {isTracking && currentSpeed === 0 && (
+          <TouchableOpacity 
+            style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: 'rgba(255, 255, 255, 0.3)',
+              alignSelf: 'center',
+              marginTop: 8
+            }}
+            onPress={resetSpeedCalculation}
+          >
+            <Text style={{ color: PRIMARY, fontSize: 14, fontWeight: '600', fontFamily: 'System' }}>
+              Reset Speed Detection
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
       {/* Ad banner placeholder */}
       <View style={{ position: 'absolute', bottom: 18, left: 18, right: 18, backgroundColor: AD_BG, borderRadius: 18, borderWidth: 2, borderColor: AD_BORDER, padding: 12, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } }}>
