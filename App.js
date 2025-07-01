@@ -56,20 +56,27 @@ function polarToCartesian(cx, cy, r, angle) {
   };
 }
 
-function SpeedometerDial({ speed, maxSpeed }) {
+function SpeedometerDial({ speed, maxSpeed, speedUnit }) {
+  // Determine max speed and labels based on unit
+  const isMph = speedUnit === 'mph';
+  const maxDialSpeed = isMph ? 140 : 220; // 140 mph max for mph dial
+  const tickLabels = isMph ? 
+    Array.from({ length: 8 }, (_, i) => i * 20) : // 0, 20, 40, ..., 140 mph
+    Array.from({ length: 12 }, (_, i) => i * 20); // 0, 20, 40, ..., 220 km/h
+  
   // Clamp speed for needle
-  const clampedSpeed = Math.max(0, Math.min(speed, 220));
-  // Needle: 0 at 225°, 220 at 45°
-  const angle = DIAL_START_ANGLE + ((clampedSpeed - 0) / 220) * 270;
+  const clampedSpeed = Math.max(0, Math.min(speed, maxDialSpeed));
+  // Needle: 0 at 225°, max at 45°
+  const angle = DIAL_START_ANGLE + ((clampedSpeed - 0) / maxDialSpeed) * 270;
   const needleLength = DIAL_RADIUS * 0.85; // Made needle much bigger - almost to the edge
   // Needle base at the center of the dial (traditional speedometer style)
   const base = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, 0, DIAL_START_ANGLE); // Start from center
   const tip = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, needleLength, angle);
 
   // Major ticks (every 20, including 0)
-  const majorTicks = TICK_ANGLES;
+  const majorTicks = Array.from({ length: tickLabels.length }, (_, i) => DIAL_START_ANGLE + (i * (270 / (tickLabels.length - 1))));
   // Minor ticks (every 10, including 0)
-  const minorTicks = Array.from({ length: 23 }, (_, i) => DIAL_START_ANGLE + (i * (270 / 22)));
+  const minorTicks = Array.from({ length: (tickLabels.length - 1) * 2 + 1 }, (_, i) => DIAL_START_ANGLE + (i * (270 / ((tickLabels.length - 1) * 2))));
   // Remove overlap where major and minor coincide
   const filteredMinorTicks = minorTicks.filter(
     (deg) => !majorTicks.some((maj) => Math.abs(maj - deg) < 1e-3)
@@ -141,7 +148,7 @@ function SpeedometerDial({ speed, maxSpeed }) {
         })}
         {/* Numbers */}
         {majorTicks.map((deg, i) => {
-          const label = TICK_LABELS[i];
+          const label = tickLabels[i];
           const labelPos = polarToCartesian(DIAL_CENTER_X, DIAL_CENTER_Y, DIAL_RADIUS - 38, deg);
           return (
             <SvgText
@@ -201,7 +208,7 @@ function SpeedometerDial({ speed, maxSpeed }) {
       {/* Large speed number (centered, positioned above needle base) */}
       <View style={{ position: 'absolute', top: DIAL_CENTER_Y - 40, left: 0, width: width, alignItems: 'center' }}>
         <Text style={{ fontSize: 68, color: '#fff', fontWeight: 'bold', fontFamily: 'System', textShadowColor: '#000', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8 }}>{Math.round(speed)}</Text>
-        <Text style={{ fontSize: 32, color: PRIMARY, fontWeight: '600', marginTop: -8, fontFamily: 'System', textShadowColor: '#000', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8 }}>km/h</Text>
+        <Text style={{ fontSize: 32, color: PRIMARY, fontWeight: '600', marginTop: -8, fontFamily: 'System', textShadowColor: '#000', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8 }}>{isMph ? 'mph' : 'km/h'}</Text>
       </View>
       {/* Max speed bubble (thinner, softer border) */}
       <View style={{
@@ -338,6 +345,21 @@ const App = () => {
       useNativeDriver: false,
     }).start();
   }, [currentSpeed]);
+
+  // Convert speed when unit changes
+  useEffect(() => {
+    if (speedUnit === 'mph') {
+      // Convert from km/h to mph
+      setCurrentSpeed(prev => prev * 0.621371);
+      setMaxSpeed(prev => prev * 0.621371);
+      setAverageSpeed(prev => prev * 0.621371);
+    } else {
+      // Convert from mph to km/h
+      setCurrentSpeed(prev => prev / 0.621371);
+      setMaxSpeed(prev => prev / 0.621371);
+      setAverageSpeed(prev => prev / 0.621371);
+    }
+  }, [speedUnit]);
 
   const startPulseAnimation = () => {
     Animated.loop(
@@ -1170,38 +1192,33 @@ const App = () => {
       {/* Add margin at the top to shift content down */}
       <View style={{ marginTop: 32 }}>
         {/* Speedometer Dial */}
-        <SpeedometerDial speed={currentSpeed} maxSpeed={maxSpeed} />
-        {/* m/s display */}
-        <View style={{ alignItems: 'center', marginTop: 10 }}>
-          <Text style={{ color: PRIMARY, fontSize: 44, fontWeight: 'bold', fontFamily: 'System' }}>{(currentSpeed / 3.6).toFixed(0)}</Text>
-          <Text style={{ color: '#b0c4de', fontSize: 20, fontFamily: 'System' }}>m/s</Text>
-          
-          {/* Movement detection indicator */}
-          {isTracking && currentSpeed === 0 && speedReadings.current.length > 5 && (
+        <SpeedometerDial speed={currentSpeed} maxSpeed={maxSpeed} speedUnit={speedUnit} />
+        {/* Movement detection indicator */}
+        {isTracking && currentSpeed === 0 && speedReadings.current.length > 5 && (
+          <View style={{ 
+            flexDirection: 'row', 
+            alignItems: 'center', 
+            marginTop: 10,
+            backgroundColor: 'rgba(255, 165, 0, 0.2)',
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 12,
+            alignSelf: 'center'
+          }}>
             <View style={{ 
-              flexDirection: 'row', 
-              alignItems: 'center', 
-              marginTop: 4,
-              backgroundColor: 'rgba(255, 165, 0, 0.2)',
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 12
-            }}>
-              <View style={{ 
-                width: 6, 
-                height: 6, 
-                borderRadius: 3, 
-                backgroundColor: '#FFA500',
-                marginRight: 6
-              }} />
-              <Text style={{ color: '#FFA500', fontSize: 12, fontFamily: 'System' }}>
-                Waiting for movement...
-              </Text>
-            </View>
-          )}
-        </View>
+              width: 6, 
+              height: 6, 
+              borderRadius: 3, 
+              backgroundColor: '#FFA500',
+              marginRight: 6
+            }} />
+            <Text style={{ color: '#FFA500', fontSize: 12, fontFamily: 'System' }}>
+              Waiting for movement...
+            </Text>
+          </View>
+        )}
         {/* Info row with SVG icons */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', marginTop: 35, marginBottom: 8 }}>
           <View style={{ alignItems: 'center', flexDirection: 'row' }}>
             <InfoIcon type="distance" />
             <Text style={{ color: INFO_TEXT, fontSize: 20, marginLeft: 6, fontFamily: 'System' }}>{formatDistance(totalDistance)}</Text>
@@ -1211,6 +1228,25 @@ const App = () => {
             <Text style={{ color: INFO_TEXT, fontSize: 20, marginLeft: 6, fontFamily: 'System' }}>±{accuracy.toFixed(0)}m</Text>
           </View>
         </View>
+        
+        {/* Speed Unit Toggle Button */}
+        <TouchableOpacity 
+          style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            paddingHorizontal: 20,
+            paddingVertical: 10,
+            borderRadius: 25,
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.3)',
+            alignSelf: 'center',
+            marginTop: 20
+          }}
+          onPress={toggleSpeedUnit}
+        >
+          <Text style={{ color: PRIMARY, fontSize: 16, fontWeight: '600', fontFamily: 'System' }}>
+            Switch to {speedUnit === 'kmh' ? 'MPH' : 'KM/H'}
+          </Text>
+        </TouchableOpacity>
         
         {/* Reset speed button - only show when speed is 0 and tracking is active */}
         {isTracking && currentSpeed === 0 && (
@@ -1223,7 +1259,7 @@ const App = () => {
               borderWidth: 1,
               borderColor: 'rgba(255, 255, 255, 0.3)',
               alignSelf: 'center',
-              marginTop: 8
+              marginTop: 15
             }}
             onPress={resetSpeedCalculation}
           >
